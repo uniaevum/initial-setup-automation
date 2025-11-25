@@ -1,0 +1,18 @@
+# Nix
+result
+result-*
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local overrides
+*.local.nix
+*.local.toml
