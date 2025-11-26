@@ -1,7 +1,3 @@
-# Nix
-result
-result-*
-
 # Editor
 .vscode/
 .idea/
@@ -14,5 +10,4 @@ result-*
 Thumbs.db
 
 # Local overrides
-*.local.nix
-*.local.toml
+*.local
