@@ -1,19 +1,15 @@
 #!/usr/bin/env bash
 #
-# Bootstrap script for installing Nix and Home Manager
-# Supports: Linux, macOS, WSL
+# Initial setup script for development environment
+# Supports: Ubuntu/Debian, macOS, WSL
 #
 # Usage:
-#   Local:  ./install.sh
-#   Remote: curl -fsSL https://raw.githubusercontent.com/uniaevum/initial-setup-automation/main/install.sh | bash
+#   ./install.sh
+#   ./install.sh --skip-packages   # Skip system package installation
+#   ./install.sh --skip-mise       # Skip mise installation
 #
 
 set -euo pipefail
-
-# Configuration
-REPO_URL="https://github.com/uniaevum/initial-setup-automation.git"
-REPO_BRANCH="main"
-INSTALL_DIR="$HOME/.config/home-manager-config"
 
 # Colors for output
 RED='\033[0;31m'
@@ -41,303 +37,419 @@ detect_platform() {
     fi
 }
 
-# Detect architecture
-detect_arch() {
-    local arch
-    arch=$(uname -m)
-    case "$arch" in
-        x86_64)  echo "x86_64" ;;
-        aarch64) echo "aarch64" ;;
-        arm64)   echo "aarch64" ;;
-        *)       echo "unknown" ;;
-    esac
+# Detect package manager
+detect_package_manager() {
+    if command -v apt-get &> /dev/null; then
+        echo "apt"
+    elif command -v brew &> /dev/null; then
+        echo "brew"
+    elif command -v dnf &> /dev/null; then
+        echo "dnf"
+    elif command -v pacman &> /dev/null; then
+        echo "pacman"
+    else
+        echo "unknown"
+    fi
 }
 
-# Get the appropriate Home Manager configuration name
-get_config_name() {
-    local platform=$1
-    local arch=$2
-    local username=${3:-$(whoami)}
+# Install Homebrew on macOS if not present
+install_homebrew() {
+    if ! command -v brew &> /dev/null; then
+        log_info "Installing Homebrew..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-    case "$platform" in
-        darwin)
-            if [[ "$arch" == "aarch64" ]]; then
-                echo "${username}-darwin-arm"
-            else
-                echo "${username}-darwin-x86"
-            fi
+        # Add to PATH for current session
+        if [[ -f /opt/homebrew/bin/brew ]]; then
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+        elif [[ -f /usr/local/bin/brew ]]; then
+            eval "$(/usr/local/bin/brew shellenv)"
+        fi
+        log_success "Homebrew installed"
+    else
+        log_info "Homebrew already installed"
+    fi
+}
+
+# Install system packages
+install_packages() {
+    local pkg_manager=$1
+
+    log_info "Installing system packages via $pkg_manager..."
+
+    case "$pkg_manager" in
+        apt)
+            sudo apt-get update
+            sudo apt-get install -y \
+                curl \
+                wget \
+                git \
+                vim \
+                jq \
+                tree \
+                htop \
+                unzip \
+                zip \
+                gnupg \
+                ca-certificates \
+                build-essential \
+                file \
+                procps \
+                shellcheck
             ;;
-        linux|wsl)
-            if [[ "$arch" == "aarch64" ]]; then
-                echo "${username}-linux-arm"
-            else
-                echo "${username}"
-            fi
+        brew)
+            brew install \
+                curl \
+                wget \
+                git \
+                vim \
+                jq \
+                yq \
+                tree \
+                htop \
+                ripgrep \
+                fd \
+                bat \
+                eza \
+                git-delta \
+                ncdu \
+                gnupg \
+                shellcheck \
+                shfmt \
+                gh
+            ;;
+        dnf)
+            sudo dnf install -y \
+                curl \
+                wget \
+                git \
+                vim \
+                jq \
+                tree \
+                htop \
+                unzip \
+                zip \
+                gnupg2 \
+                file \
+                procps-ng \
+                ShellCheck
+            ;;
+        pacman)
+            sudo pacman -Syu --noconfirm \
+                curl \
+                wget \
+                git \
+                vim \
+                jq \
+                tree \
+                htop \
+                unzip \
+                zip \
+                gnupg \
+                file \
+                procps-ng \
+                shellcheck
             ;;
         *)
-            echo "${username}"
+            log_warn "Unknown package manager. Skipping system packages."
+            return 1
             ;;
     esac
+
+    log_success "System packages installed"
 }
 
-# Check if Nix is installed
-check_nix() {
-    if command -v nix &> /dev/null; then
-        return 0
-    fi
-    return 1
-}
+# Install modern CLI tools on apt-based systems (not available in default repos)
+install_modern_tools_apt() {
+    log_info "Installing modern CLI tools..."
 
-# Check if Home Manager is installed
-check_home_manager() {
-    if command -v home-manager &> /dev/null; then
-        return 0
-    fi
-    return 1
-}
-
-# Source Nix environment
-source_nix() {
-    if [[ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]]; then
-        # shellcheck source=/dev/null
-        . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-    elif [[ -f "$HOME/.nix-profile/etc/profile.d/nix.sh" ]]; then
-        # shellcheck source=/dev/null
-        . "$HOME/.nix-profile/etc/profile.d/nix.sh"
-    fi
-}
-
-# Install Nix
-install_nix() {
-    log_info "Installing Nix..."
-
-    if check_nix; then
-        log_warn "Nix is already installed"
-        return 0
+    # ripgrep
+    if ! command -v rg &> /dev/null; then
+        log_info "Installing ripgrep..."
+        curl -LO https://github.com/BurntSushi/ripgrep/releases/download/14.1.0/ripgrep_14.1.0-1_amd64.deb
+        sudo dpkg -i ripgrep_14.1.0-1_amd64.deb
+        rm ripgrep_14.1.0-1_amd64.deb
     fi
 
-    # Use the Determinate Nix Installer for better defaults
-    curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
-
-    log_success "Nix installed successfully"
-
-    # Source Nix
-    source_nix
-}
-
-# Check SSH key and show instructions if missing
-check_ssh_key() {
-    local ssh_key="$HOME/.ssh/id_ed25519"
-
-    if [[ -f "$ssh_key" ]]; then
-        log_info "SSH key found: $ssh_key"
-        return 0
+    # fd
+    if ! command -v fd &> /dev/null && ! command -v fdfind &> /dev/null; then
+        log_info "Installing fd..."
+        curl -LO https://github.com/sharkdp/fd/releases/download/v10.2.0/fd_10.2.0_amd64.deb
+        sudo dpkg -i fd_10.2.0_amd64.deb
+        rm fd_10.2.0_amd64.deb
     fi
 
-    log_warn "No default SSH key found at $ssh_key"
-    echo ""
-    echo "Some tools (like mise/pyenv for Python) require SSH access to GitHub."
-    echo "To create an SSH key, run:"
-    echo ""
-    echo "  ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -C \"$(whoami)@$(hostname)\""
-    echo ""
-    echo "Then add the public key to GitHub:"
-    echo "  cat ~/.ssh/id_ed25519.pub"
-    echo ""
-    echo "Or visit: https://github.com/settings/ssh/new"
-    echo ""
-}
-
-# Clone or update repository
-setup_repo() {
-    local config_dir=$1
-
-    log_info "Setting up configuration repository..."
-
-    if [[ -d "$config_dir/.git" ]]; then
-        log_info "Repository exists, pulling latest changes..."
-        cd "$config_dir"
-        git pull origin "$REPO_BRANCH" || log_warn "Could not pull latest changes"
-    else
-        log_info "Cloning repository..."
-        rm -rf "$config_dir"
-        git clone --branch "$REPO_BRANCH" "$REPO_URL" "$config_dir"
+    # bat
+    if ! command -v bat &> /dev/null && ! command -v batcat &> /dev/null; then
+        log_info "Installing bat..."
+        curl -LO https://github.com/sharkdp/bat/releases/download/v0.24.0/bat_0.24.0_amd64.deb
+        sudo dpkg -i bat_0.24.0_amd64.deb
+        rm bat_0.24.0_amd64.deb
     fi
 
-    # Replace __USERNAME__ placeholder with actual username
-    configure_username "$config_dir"
-
-    log_success "Repository ready at $config_dir"
-}
-
-# Configure username in flake.nix
-configure_username() {
-    local config_dir=$1
-    local current_user
-    current_user=$(whoami)
-    local flake_file="$config_dir/flake.nix"
-
-    if grep -q "__USERNAME__" "$flake_file" 2>/dev/null; then
-        log_info "Configuring username: $current_user"
-        sed -i "s/__USERNAME__/$current_user/g" "$flake_file"
-    fi
-}
-
-# Setup the flake configuration
-setup_flake() {
-    log_info "Setting up flake configuration..."
-
-    # Ensure experimental features are enabled
-    mkdir -p "$HOME/.config/nix"
-    if ! grep -q "experimental-features" "$HOME/.config/nix/nix.conf" 2>/dev/null; then
-        echo "experimental-features = nix-command flakes" >> "$HOME/.config/nix/nix.conf"
+    # eza (modern ls)
+    if ! command -v eza &> /dev/null; then
+        log_info "Installing eza..."
+        sudo mkdir -p /etc/apt/keyrings
+        wget -qO- https://raw.githubusercontent.com/eza-community/eza/main/deb.asc | sudo gpg --dearmor -o /etc/apt/keyrings/gierens.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/gierens.gpg] http://deb.gierens.de stable main" | sudo tee /etc/apt/sources.list.d/gierens.list
+        sudo chmod 644 /etc/apt/keyrings/gierens.gpg /etc/apt/sources.list.d/gierens.list
+        sudo apt-get update
+        sudo apt-get install -y eza
     fi
 
-    log_success "Flake configuration ready"
-}
-
-# Apply Home Manager configuration
-apply_home_manager() {
-    local config_dir=$1
-    local platform=$2
-    local arch=$3
-    local config_name
-    config_name=$(get_config_name "$platform" "$arch")
-
-    log_info "Applying Home Manager configuration: $config_name"
-
-    cd "$config_dir"
-
-    # First time: bootstrap Home Manager
-    if ! check_home_manager; then
-        log_info "Bootstrapping Home Manager..."
-        nix run home-manager/master -- switch --flake ".#${config_name}" -b backup
-    else
-        home-manager switch --flake ".#${config_name}" -b backup
+    # delta (better git diff)
+    if ! command -v delta &> /dev/null; then
+        log_info "Installing delta..."
+        curl -LO https://github.com/dandavison/delta/releases/download/0.18.2/git-delta_0.18.2_amd64.deb
+        sudo dpkg -i git-delta_0.18.2_amd64.deb
+        rm git-delta_0.18.2_amd64.deb
     fi
 
-    log_success "Home Manager configuration applied"
+    # GitHub CLI
+    if ! command -v gh &> /dev/null; then
+        log_info "Installing GitHub CLI..."
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+        sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+        sudo apt-get update
+        sudo apt-get install -y gh
+    fi
+
+    # yq
+    if ! command -v yq &> /dev/null; then
+        log_info "Installing yq..."
+        sudo curl -L https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 -o /usr/local/bin/yq
+        sudo chmod +x /usr/local/bin/yq
+    fi
+
+    log_success "Modern CLI tools installed"
 }
 
-# Post-installation setup
-post_install() {
-    log_info "Running post-installation setup..."
-
-    # Source nix again to ensure new paths are available
-    source_nix
-
-    # Setup mise tools
+# Install mise
+install_mise() {
     if command -v mise &> /dev/null; then
-        log_info "Setting up mise tools..."
-        mise trust ~/.config/mise/config.toml 2>/dev/null || true
-        mise install || log_warn "Some mise tools may have failed to install"
+        log_info "mise already installed"
+        return 0
     fi
 
-    log_success "Post-installation complete"
+    log_info "Installing mise..."
+    curl https://mise.run | sh
+
+    # Add mise to PATH for current session
+    export PATH="$HOME/.local/bin:$PATH"
+
+    log_success "mise installed"
 }
 
-# Print next steps
-print_next_steps() {
-    local platform=$1
-    local config_dir=$2
+# Setup mise configuration
+setup_mise_config() {
+    local config_dir="$HOME/.config/mise"
+    local config_file="$config_dir/config.toml"
 
-    echo ""
-    log_success "Installation complete!"
-    echo ""
-    echo "Configuration directory: $config_dir"
-    echo ""
-    echo "Next steps:"
-    echo "  1. Restart your shell or run: source ~/.bashrc"
-    echo "  2. Run 'mise-setup' to install development tools"
-    echo "  3. Run 'install-claude' to install Claude CLI"
-    echo ""
-    echo "Useful commands:"
-    echo "  cd $config_dir"
-    echo "  home-manager switch --flake .#<config-name>  - Apply changes"
-    echo "  home-manager generations                      - List generations"
-    echo "  nix flake update                              - Update flake inputs"
-    echo ""
-    echo "To customize your configuration:"
-    echo "  1. Edit files in $config_dir/modules/"
-    echo "  2. Run: home-manager switch --flake $config_dir#<config-name>"
-    echo ""
+    log_info "Setting up mise configuration..."
 
-    if [[ "$platform" == "wsl" ]]; then
-        echo "WSL-specific notes:"
-        echo "  - Docker should be installed on Windows with WSL integration"
-        echo "  - Use 'wslview' to open files in Windows"
-        echo ""
+    mkdir -p "$config_dir"
+
+    cat > "$config_file" << 'EOF'
+[settings]
+# Automatically trust all .mise.toml files in trusted directories
+trusted_config_paths = ["~/workspace"]
+
+# Use verbose output
+verbose = false
+
+# Experimental features
+experimental = true
+
+# Always keep downloaded archives
+always_keep_download = true
+
+# Plugin update interval (hours)
+plugin_autoupdate_last_check_duration = "168h"
+
+[tools]
+# Programming languages
+node = "22"
+python = "latest"
+
+# Container tools
+docker = "latest"
+"docker-compose" = "latest"
+
+# Version aliases
+[alias.node.versions]
+lts = "22"
+EOF
+
+    log_success "mise configuration created at $config_file"
+}
+
+# Add mise to shell configuration (append only, don't overwrite)
+setup_shell_integration() {
+    log_info "Setting up shell integration..."
+
+    local mise_init='
+# mise (runtime version manager)
+export PATH="$HOME/.local/bin:$PATH"
+if command -v mise &> /dev/null; then
+    eval "$(mise activate bash)"
+fi
+'
+
+    local mise_init_zsh='
+# mise (runtime version manager)
+export PATH="$HOME/.local/bin:$PATH"
+if command -v mise &> /dev/null; then
+    eval "$(mise activate zsh)"
+fi
+'
+
+    # Add to .bashrc if not already present
+    if [[ -f "$HOME/.bashrc" ]]; then
+        if ! grep -q "mise activate" "$HOME/.bashrc"; then
+            echo "$mise_init" >> "$HOME/.bashrc"
+            log_info "Added mise to ~/.bashrc"
+        else
+            log_info "mise already in ~/.bashrc"
+        fi
     fi
+
+    # Add to .zshrc if it exists and not already present
+    if [[ -f "$HOME/.zshrc" ]]; then
+        if ! grep -q "mise activate" "$HOME/.zshrc"; then
+            echo "$mise_init_zsh" >> "$HOME/.zshrc"
+            log_info "Added mise to ~/.zshrc"
+        else
+            log_info "mise already in ~/.zshrc"
+        fi
+    fi
+
+    # Add to .profile for login shells
+    if [[ -f "$HOME/.profile" ]]; then
+        if ! grep -q 'HOME/.local/bin' "$HOME/.profile"; then
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.profile"
+            log_info "Added ~/.local/bin to ~/.profile"
+        fi
+    fi
+
+    log_success "Shell integration configured"
+}
+
+# Install mise tools
+install_mise_tools() {
+    log_info "Installing mise-managed tools..."
+
+    # Ensure mise is in PATH
+    export PATH="$HOME/.local/bin:$PATH"
+
+    # Trust and install
+    mise trust "$HOME/.config/mise/config.toml"
+    mise install
+
+    log_success "mise tools installed"
+    echo ""
+    log_info "Installed tools:"
+    mise list
+}
+
+# Setup git configuration (only if not already configured)
+setup_git() {
+    log_info "Setting up git configuration..."
+
+    # Only set defaults if not already configured
+    if [[ -z "$(git config --global core.editor 2>/dev/null)" ]]; then
+        git config --global core.editor "vim"
+    fi
+
+    if [[ -z "$(git config --global init.defaultBranch 2>/dev/null)" ]]; then
+        git config --global init.defaultBranch "main"
+    fi
+
+    if [[ -z "$(git config --global pull.rebase 2>/dev/null)" ]]; then
+        git config --global pull.rebase true
+    fi
+
+    if [[ -z "$(git config --global push.autoSetupRemote 2>/dev/null)" ]]; then
+        git config --global push.autoSetupRemote true
+    fi
+
+    # Configure delta if available
+    if command -v delta &> /dev/null; then
+        if [[ -z "$(git config --global core.pager 2>/dev/null)" ]]; then
+            git config --global core.pager "delta"
+            git config --global interactive.diffFilter "delta --color-only"
+            git config --global delta.navigate true
+            git config --global delta.side-by-side true
+            git config --global merge.conflictstyle "diff3"
+        fi
+    fi
+
+    log_success "Git configuration done"
 }
 
 # Print usage
 print_usage() {
     echo "Usage: $0 [options]"
     echo ""
-    echo "Bootstrap installer for Nix + Home Manager development environment."
+    echo "Initial setup script for development environment."
     echo ""
     echo "Options:"
-    echo "  --skip-nix       Skip Nix installation"
-    echo "  --skip-apply     Skip Home Manager configuration apply"
-    echo "  --skip-clone     Skip cloning repository (use current directory)"
-    echo "  --dir <path>     Installation directory (default: $INSTALL_DIR)"
-    echo "  --help, -h       Show this help message"
+    echo "  --skip-packages    Skip system package installation"
+    echo "  --skip-mise        Skip mise installation and configuration"
+    echo "  --mise-only        Only install/setup mise (skip packages)"
+    echo "  --help, -h         Show this help message"
+}
+
+# Print next steps
+print_next_steps() {
     echo ""
-    echo "Remote installation:"
-    echo "  curl -fsSL https://raw.githubusercontent.com/uniaevum/initial-setup-automation/main/install.sh | bash"
+    log_success "Installation complete!"
     echo ""
-    echo "With options:"
-    echo "  curl -fsSL https://raw.githubusercontent.com/uniaevum/initial-setup-automation/main/install.sh | bash -s -- --skip-nix"
+    echo "Next steps:"
+    echo "  1. Restart your shell or run: source ~/.bashrc"
+    echo "  2. Run 'mise install' to install development tools"
+    echo ""
+    echo "Useful commands:"
+    echo "  mise list          - Show installed tools"
+    echo "  mise install       - Install tools from config"
+    echo "  mise use node@20   - Switch Node.js version"
+    echo "  mise doctor        - Check mise health"
+    echo ""
 }
 
 # Main function
 main() {
     echo "=========================================="
-    echo "  Nix + Home Manager Bootstrap Installer"
+    echo "  Development Environment Setup"
     echo "=========================================="
     echo ""
 
     local platform
-    local arch
+    local pkg_manager
     platform=$(detect_platform)
-    arch=$(detect_arch)
+    pkg_manager=$(detect_package_manager)
 
     log_info "Detected platform: $platform"
-    log_info "Detected architecture: $arch"
-
-    if [[ "$platform" == "unknown" ]]; then
-        log_error "Unknown platform. This script supports Linux, macOS, and WSL."
-        exit 1
-    fi
-
-    if [[ "$arch" == "unknown" ]]; then
-        log_error "Unknown architecture. This script supports x86_64 and aarch64."
-        exit 1
-    fi
+    log_info "Detected package manager: $pkg_manager"
 
     # Parse arguments
-    local skip_nix=false
-    local skip_apply=false
-    local skip_clone=false
-    local config_dir="$INSTALL_DIR"
+    local skip_packages=false
+    local skip_mise=false
+    local mise_only=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --skip-nix)
-                skip_nix=true
+            --skip-packages)
+                skip_packages=true
                 shift
                 ;;
-            --skip-apply)
-                skip_apply=true
+            --skip-mise)
+                skip_mise=true
                 shift
                 ;;
-            --skip-clone)
-                skip_clone=true
+            --mise-only)
+                mise_only=true
                 shift
-                ;;
-            --dir)
-                config_dir="$2"
-                shift 2
                 ;;
             --help|-h)
                 print_usage
@@ -351,52 +463,47 @@ main() {
         esac
     done
 
-    # Check SSH key (needed for mise/pyenv to clone from GitHub)
-    check_ssh_key
-
-    # Install Nix
-    if [[ "$skip_nix" == "false" ]]; then
-        install_nix
-    else
-        log_warn "Skipping Nix installation"
-        # Still try to source nix if it exists
-        source_nix
+    # Install Homebrew on macOS first
+    if [[ "$platform" == "darwin" ]]; then
+        install_homebrew
+        pkg_manager="brew"
     fi
 
-    # Setup flake
-    setup_flake
+    # Install system packages
+    if [[ "$skip_packages" == "false" ]] && [[ "$mise_only" == "false" ]]; then
+        install_packages "$pkg_manager"
 
-    # Clone repository (for remote execution)
-    if [[ "$skip_clone" == "false" ]]; then
-        setup_repo "$config_dir"
-    else
-        # Use current directory or specified directory
-        if [[ "$config_dir" == "$INSTALL_DIR" ]]; then
-            # Check if we're in a directory with flake.nix
-            if [[ -f "./flake.nix" ]]; then
-                config_dir="$(pwd)"
-                log_info "Using current directory: $config_dir"
-            else
-                log_error "No flake.nix found in current directory. Remove --skip-clone or run from repository root."
-                exit 1
-            fi
+        # Install modern tools on apt-based systems
+        if [[ "$pkg_manager" == "apt" ]]; then
+            install_modern_tools_apt
         fi
-        # Configure username even when skipping clone
-        configure_username "$config_dir"
-    fi
 
-    # Apply Home Manager configuration
-    if [[ "$skip_apply" == "false" ]]; then
-        apply_home_manager "$config_dir" "$platform" "$arch"
+        # Setup git
+        setup_git
     else
-        log_warn "Skipping Home Manager configuration apply"
+        log_warn "Skipping system package installation"
     fi
 
-    # Post-installation
-    post_install
+    # Install and configure mise
+    if [[ "$skip_mise" == "false" ]]; then
+        install_mise
+        setup_mise_config
+        setup_shell_integration
 
-    # Print next steps
-    print_next_steps "$platform" "$config_dir"
+        # Ask if user wants to install mise tools now
+        echo ""
+        read -p "Install mise-managed tools now? (node, python, rust, etc.) [y/N] " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            install_mise_tools
+        else
+            log_info "Skipped. Run 'mise install' later to install tools."
+        fi
+    else
+        log_warn "Skipping mise installation"
+    fi
+
+    print_next_steps
 }
 
 main "$@"
