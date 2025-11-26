@@ -272,10 +272,6 @@ plugin_autoupdate_last_check_duration = "168h"
 node = "22"
 python = "latest"
 
-# Container tools
-docker = "latest"
-"docker-compose" = "latest"
-
 # Version aliases
 [alias.node.versions]
 lts = "22"

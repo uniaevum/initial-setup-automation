@@ -7,7 +7,13 @@ Supports: Ubuntu/Debian, macOS (Intel/Apple Silicon), WSL2, Fedora, Arch Linux
 ## Quick Start
 
 ```bash
-# Clone and run
+# One-liner install (no clone required)
+curl -fsSL https://raw.githubusercontent.com/uniaevum/initial-setup-automation/main/install.sh | bash
+
+# Or with options
+curl -fsSL https://raw.githubusercontent.com/uniaevum/initial-setup-automation/main/install.sh | bash -s -- --skip-packages
+
+# Or clone and run
 git clone https://github.com/uniaevum/initial-setup-automation.git
 cd initial-setup-automation
 ./install.sh
@@ -29,8 +35,6 @@ cd initial-setup-automation
 |------|-------------|
 | node | JavaScript runtime (v22 LTS) |
 | python | Python (latest) |
-| docker | Docker CLI |
-| docker-compose | Container orchestration |
 
 ## Options
 
